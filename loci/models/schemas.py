@@ -155,6 +155,7 @@ class FigureCandidate(BaseModel):
     bbox: tuple[float, float, float, float] | None = None
     crop_path: str
     caption: str | None = None
+    related_text: str | None = None
     confidence: float = 0.5
 
 
@@ -163,6 +164,7 @@ class EquationCandidate(BaseModel):
     bbox: tuple[float, float, float, float] | None = None
     source_text: str | None = None
     mathjax: str
+    related_text: str | None = None
     confidence: float = 0.5
 
 
@@ -172,6 +174,7 @@ class ParsedDocument(BaseModel):
     sections: list[SectionCandidate] = Field(default_factory=list)
     figures: list[FigureCandidate] = Field(default_factory=list)
     equations: list[EquationCandidate] = Field(default_factory=list)
+    page_spans: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -145,6 +145,8 @@ class StorageService:
     # Sections
     # ------------------------------------------------------------------
     def create_section(self, section: Section) -> Section:
+        """Persist a section and return the stored model."""
+
         with self.connection() as conn:
             conn.execute(
                 """
@@ -174,6 +176,36 @@ class StorageService:
             self._upsert_fts(conn, section)
         return section
 
+    def update_section(self, section: Section) -> Section:
+        """Update mutable derived section metadata without changing verbatim text identity."""
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE sections
+                SET parent_id = ?, title = ?, level = ?, order_index = ?,
+                    page_start = ?, page_end = ?, verbatim_content = ?,
+                    ai_summary = ?, source_char_start = ?, source_char_end = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    section.parent_id,
+                    section.title,
+                    section.level,
+                    section.order_index,
+                    section.page_start,
+                    section.page_end,
+                    section.verbatim_content,
+                    section.ai_summary,
+                    section.source_char_start,
+                    section.source_char_end,
+                    _json(section.metadata),
+                    section.id,
+                ),
+            )
+            self._upsert_fts(conn, section)
+        return section
+
     def list_sections(self, document_id: str | None = None) -> list[Section]:
         query = "SELECT * FROM sections"
         params: tuple[Any, ...] = ()
@@ -184,6 +216,21 @@ class StorageService:
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_section(row) for row in rows]
+
+    def update_section_summary(self, section_id: str, summary: str, metadata: dict[str, Any] | None = None) -> None:
+        """Update only AI-owned section summary/metadata fields."""
+
+        with self.connection() as conn:
+            if metadata is None:
+                conn.execute("UPDATE sections SET ai_summary = ? WHERE id = ?", (summary, section_id))
+            else:
+                conn.execute(
+                    "UPDATE sections SET ai_summary = ?, metadata = ? WHERE id = ?",
+                    (summary, _json(metadata), section_id),
+                )
+            section = conn.execute("SELECT * FROM sections WHERE id = ?", (section_id,)).fetchone()
+            if section:
+                self._upsert_fts(conn, self._row_to_section(section))
 
     def get_section(self, section_id: str) -> Section | None:
         with self.connection() as conn:
@@ -501,7 +548,14 @@ class StorageService:
     # Embeddings and traces
     # ------------------------------------------------------------------
     def save_embedding(
-        self, owner_type: str, owner_id: str, text_hash: str, model: str, vector: list[float], metadata: dict[str, Any] | None = None
+        self,
+        owner_type: str,
+        owner_id: str,
+        text_hash: str,
+        model: str,
+        vector: list[float],
+        metadata: dict[str, Any] | None = None,
+        embedding_type: str = "content",
     ) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -509,15 +563,31 @@ class StorageService:
                 INSERT INTO embeddings(id, owner_type, owner_id, text_hash, embedding_type, model, vector, created_at, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_id("emb"), owner_type, owner_id, text_hash, "content", model, _json(vector), iso_now().isoformat(), _json(metadata or {})),
+                (
+                    new_id("emb"),
+                    owner_type,
+                    owner_id,
+                    text_hash,
+                    embedding_type,
+                    model,
+                    _json(vector),
+                    iso_now().isoformat(),
+                    _json(metadata or {}),
+                ),
             )
 
-    def list_embeddings(self, owner_type: str | None = None) -> list[dict[str, Any]]:
+    def list_embeddings(self, owner_type: str | None = None, embedding_type: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM embeddings"
-        params: tuple[Any, ...] = ()
+        clauses: list[str] = []
+        params: list[Any] = []
         if owner_type:
-            query += " WHERE owner_type = ?"
-            params = (owner_type,)
+            clauses.append("owner_type = ?")
+            params.append(owner_type)
+        if embedding_type:
+            clauses.append("embedding_type = ?")
+            params.append(embedding_type)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [dict(row) | {"vector": _loads(row["vector"], []), "metadata": _loads(row["metadata"], {})} for row in rows]
