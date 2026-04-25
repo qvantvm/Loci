@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loci"
+version = "0.1.0"
+description = "A visual, AI-assisted desktop knowledge base for grounded technical reading."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Loci" }]
+dependencies = [
+  "PySide6>=6.7",
+  "PySide6-WebEngine>=6.7",
+  "pydantic>=2.7",
+  "python-dotenv>=1.0",
+  "openai>=1.30",
+  "PyMuPDF>=1.24",
+  "markdown-it-py>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+loci = "loci.app:main"
+
+[tool.setuptools.packages.find]
+include = ["loci*"]
+
+[tool.setuptools.package-data]
+loci = ["prompts/*.md", "data/.gitkeep", "data/sources/.gitkeep", "data/crops/.gitkeep", "data/artifacts/.gitkeep"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
