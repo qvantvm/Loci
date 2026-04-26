@@ -5,6 +5,7 @@ from __future__ import annotations
 try:
     from PySide6.QtCore import Signal
     from PySide6.QtWidgets import (
+        QFrame,
         QHBoxLayout,
         QLabel,
         QLineEdit,
@@ -32,23 +33,31 @@ class LeftLibraryPane(QWidget):
         super().__init__()
         self.storage = storage
         self.search = QLineEdit()
+        self.search.setObjectName("sidebarSearch")
         self.search.setPlaceholderText("Search library…")
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
+        self.tree.setAnimated(True)
+        self.tree.setIndentation(14)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setRootIsDecorated(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
 
-        upload = QPushButton("Upload")
+        upload = QPushButton("Import")
+        upload.setObjectName("primaryButton")
         paste = QPushButton("Paste")
         upload.clicked.connect(self.upload_requested.emit)
         paste.clicked.connect(self.paste_requested.emit)
 
-        title = QLabel("Knowledge Library")
+        title = QLabel("LIBRARY")
         title.setObjectName("PaneTitle")
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
+        header_frame = QFrame()
+        header_frame.setObjectName("panelHeader")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(10, 9, 10, 9)
         header.addWidget(title)
         header.addStretch()
-        header.addWidget(Badge("Original + AI"))
+        header.addWidget(Badge("Source + AI"))
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
@@ -57,36 +66,35 @@ class LeftLibraryPane(QWidget):
         buttons.addWidget(paste)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 10, 14)
-        layout.setSpacing(10)
-        layout.addLayout(header)
-        layout.addWidget(self.search)
-        layout.addLayout(buttons)
-        layout.addWidget(self.tree)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(header_frame)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(10, 10, 10, 10)
+        body_layout.setSpacing(8)
+        body_layout.addWidget(self.search)
+        body_layout.addLayout(buttons)
+        body_layout.addWidget(self.tree)
+        layout.addWidget(body)
         self.refresh()
 
     def refresh(self) -> None:
         self.tree.clear()
+        root_item = QTreeWidgetItem(["LOCI"])
+        root_item.setData(0, 32, {})
+        self.tree.addTopLevelItem(root_item)
         for document in self.storage.list_documents():
-            doc_item = QTreeWidgetItem(
-                [
-                    f"{document.title}\n"
-                    f"{document.source_type.upper()} • {document.created_at.date().isoformat()}"
-                ]
-            )
+            doc_item = QTreeWidgetItem([document.title])
+            doc_item.setToolTip(0, f"{document.source_type.upper()} • {document.created_at.date().isoformat()}")
             doc_item.setData(0, 32, {"document_id": document.id})
-            self.tree.addTopLevelItem(doc_item)
+            root_item.addChild(doc_item)
             section_items: dict[str, QTreeWidgetItem] = {}
             sections = self.storage.list_sections(document.id)
             for section in sections:
-                figures = len(self.storage.list_figures(section_id=section.id))
-                equations = len(self.storage.list_equations(section_id=section.id))
-                artifacts = len(self.storage.list_artifacts(section_id=section.id))
-                summary = (section.ai_summary or "No AI summary yet").strip().replace("\n", " ")
-                if len(summary) > 100:
-                    summary = summary[:97] + "…"
-                suffix = f"  🖼 {figures}  ∑ {equations}  ✦ {artifacts}"
-                item = QTreeWidgetItem([f"{'  ' * max(section.level - 1, 0)}{section.title}{suffix}\n{summary}"])
+                item = QTreeWidgetItem([section.title])
+                if section.ai_summary:
+                    item.setToolTip(0, section.ai_summary.strip())
                 item.setData(0, 32, {"document_id": document.id, "section_id": section.id})
                 parent = section_items.get(section.parent_id or "")
                 if parent is not None:
@@ -95,6 +103,7 @@ class LeftLibraryPane(QWidget):
                     doc_item.addChild(item)
                 section_items[section.id] = item
             doc_item.setExpanded(True)
+        root_item.setExpanded(True)
 
     def _on_item_clicked(self, item: QTreeWidgetItem) -> None:
         payload = item.data(0, 32) or {}

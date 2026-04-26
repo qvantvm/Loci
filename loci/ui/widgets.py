@@ -18,8 +18,8 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName("card")
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(14, 14, 14, 14)
-        self._layout.setSpacing(10)
+        self._layout.setContentsMargins(12, 12, 12, 12)
+        self._layout.setSpacing(8)
 
         if isinstance(body, str) and badge is None:
             badge = body

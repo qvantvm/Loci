@@ -6,12 +6,19 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
+    QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
     QSplitter,
     QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from loci.services.ingestion_pipeline import IngestionPipeline
@@ -38,8 +45,11 @@ class MainWindow(QMainWindow):
         self.dark = True
 
         self.library = LeftLibraryPane(self.storage)
+        self.library.setObjectName("sidebarPane")
         self.reader = ContentReader(self.storage)
+        self.reader.setObjectName("editorPane")
         self.discussion = DiscussionPane(self.storage, self.rce, self.openai)
+        self.discussion.setObjectName("agentPane")
 
         self.library.section_selected.connect(self.open_section)
         self.library.upload_requested.connect(self.upload_file)
@@ -51,9 +61,17 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.library)
         splitter.addWidget(self.reader)
         splitter.addWidget(self.discussion)
-        splitter.setSizes([320, 680, 420])
+        splitter.setSizes([310, 760, 420])
         splitter.setChildrenCollapsible(False)
-        self.setCentralWidget(splitter)
+
+        shell = QWidget()
+        shell.setObjectName("shell")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(self._activity_rail())
+        shell_layout.addWidget(splitter, 1)
+        self.setCentralWidget(shell)
 
         self._build_toolbar()
         apply_theme(self, dark=True)
@@ -67,10 +85,42 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         self.addToolBar(toolbar)
+        crumb = QLabel("LOCI")
+        crumb.setObjectName("appCrumb")
+        toolbar.addWidget(crumb)
+        command = QLineEdit()
+        command.setObjectName("commandCenter")
+        command.setPlaceholderText("Search library or ask Loci")
+        command.setFixedWidth(420)
+        toolbar.addWidget(command)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
         toolbar.addAction("Upload File", self.upload_file)
         toolbar.addAction("Paste Text", self.paste_text)
         toolbar.addAction("Refresh", self.refresh)
         toolbar.addAction("Toggle Theme", self.toggle_theme)
+
+    def _activity_rail(self) -> QWidget:
+        rail = QFrame()
+        rail.setObjectName("activityRail")
+        rail.setFixedWidth(48)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(6, 10, 6, 10)
+        layout.setSpacing(8)
+
+        logo = QLabel("L")
+        logo.setObjectName("railLogo")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo)
+
+        for label in ("KB", "AI", "SR"):
+            item = QLabel(label)
+            item.setObjectName("railItem")
+            item.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(item)
+        layout.addStretch(1)
+        return rail
 
     def refresh(self) -> None:
         self.library.refresh()

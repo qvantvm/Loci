@@ -53,7 +53,7 @@ class ContentReader(QWidget):
         self.artifact_buttons: dict[str, QPushButton] = {}
         artifact_row = QHBoxLayout()
         artifact_row.setContentsMargins(0, 0, 0, 0)
-        artifact_row.setSpacing(8)
+        artifact_row.setSpacing(6)
         for artifact_type, label in {
             "summary": "Whole Summary",
             "faq": "FAQ",
@@ -67,15 +67,22 @@ class ContentReader(QWidget):
 
         body = QWidget()
         self.body_layout = QVBoxLayout(body)
-        self.body_layout.setContentsMargins(16, 14, 16, 14)
-        self.body_layout.setSpacing(12)
+        self.body_layout.setContentsMargins(18, 14, 18, 18)
+        self.body_layout.setSpacing(10)
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         self.title = QLabel("Loci Reader")
-        self.title.setObjectName("PaneTitle")
-        title_row.addWidget(self.title)
+        self.title.setObjectName("editorTab")
+        tab_bar = QFrame()
+        tab_bar.setObjectName("tabBar")
+        tab_layout = QHBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+        tab_layout.addWidget(self.title)
+        tab_layout.addStretch()
         title_row.addStretch()
         title_row.addWidget(Badge("Original content is never rewritten"))
+        self.body_layout.addWidget(tab_bar)
         self.body_layout.addLayout(title_row)
         self.body_layout.addLayout(artifact_row)
         self.body_layout.addWidget(Card("Source", self._layout_widget(self.source_flow), "source"))
@@ -189,35 +196,35 @@ class ContentReader(QWidget):
         <html><head><style>
         body {{
             background: transparent;
-            color: #D7DAE0;
+            color: #C7CBD3;
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 14px;
-            line-height: 1.58;
+            line-height: 1.55;
             margin: 0;
         }}
-        h1, h2, h3, h4 {{ color: #F5F7FA; line-height: 1.25; margin: 16px 0 8px; }}
+        h1, h2, h3, h4 {{ color: #F2F3F5; line-height: 1.25; margin: 16px 0 8px; }}
         h1 {{ font-size: 24px; }}
         h2 {{ font-size: 20px; }}
         h3 {{ font-size: 17px; }}
         p {{ margin: 8px 0; }}
         ul, ol {{ margin: 8px 0 8px 22px; padding: 0; }}
         blockquote {{
-            border-left: 3px solid #4D7DFF;
-            color: #BFC5D2;
+            border-left: 3px solid #4C89FF;
+            color: #AEB5C2;
             margin: 12px 0;
             padding: 2px 0 2px 12px;
         }}
         code {{
-            background: #0F1117;
-            border: 1px solid #242832;
+            background: #10131A;
+            border: 1px solid #272C36;
             border-radius: 5px;
-            color: #E6E8EC;
+            color: #DDE1E8;
             padding: 1px 4px;
         }}
         pre {{
-            background: #0F1117;
-            border: 1px solid #242832;
-            border-radius: 10px;
+            background: #10131A;
+            border: 1px solid #272C36;
+            border-radius: 8px;
             margin: 12px 0;
             padding: 12px;
             white-space: pre-wrap;

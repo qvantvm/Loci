@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -33,8 +34,14 @@ class DiscussionPane(QWidget):
         self.section_id: str | None = None
         self.thread_id: str | None = None
 
-        self.title = QLabel("Section Discussion")
+        self.title = QLabel("AGENTS")
         self.title.setObjectName("PaneTitle")
+        header = QFrame()
+        header.setObjectName("panelHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(10, 9, 10, 9)
+        header_layout.addWidget(self.title)
+        header_layout.addStretch()
         self.messages = QVBoxLayout()
         self.messages.setContentsMargins(0, 0, 0, 0)
         self.messages.setSpacing(10)
@@ -62,17 +69,22 @@ class DiscussionPane(QWidget):
 
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(8)
+        buttons.setSpacing(6)
         for button in (ask_user, ask_expert, ask_critic, ask_beginner, ask_all):
             buttons.addWidget(button)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 14, 14, 14)
-        layout.setSpacing(10)
-        layout.addWidget(self.title)
-        layout.addWidget(scroll)
-        layout.addWidget(self.input)
-        layout.addLayout(buttons)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(header)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(10, 10, 10, 10)
+        body_layout.setSpacing(8)
+        body_layout.addWidget(scroll)
+        body_layout.addWidget(self.input)
+        body_layout.addLayout(buttons)
+        layout.addWidget(body)
 
     def load_section(self, section_id: str) -> None:
         section = self.storage.get_section(section_id)
@@ -81,7 +93,7 @@ class DiscussionPane(QWidget):
         self.section_id = section_id
         thread = self.storage.get_or_create_root_thread(section.document_id, section.id)
         self.thread_id = thread.id
-        self.title.setText(f"Discussion · {section.title}")
+        self.title.setText("AGENTS")
         self.refresh()
 
     def refresh(self) -> None:
