@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+from typing import Any
 
+from markdown_it import MarkdownIt
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -14,6 +16,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +27,7 @@ try:  # pragma: no cover - depends on optional WebEngine availability.
 except Exception:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment]
 
-from loci.models.schemas import Equation, Section
+from loci.models.schemas import Equation, Figure, Section
 from loci.services.storage_service import StorageService
 from loci.ui.artifact_views import ArtifactDialog
 from loci.ui.widgets import Badge, Card, LabelValue
@@ -39,12 +43,12 @@ class ContentReader(QWidget):
         super().__init__()
         self.storage = storage
         self.current_section: Section | None = None
-        self.source_label = QLabel("Select a section to begin.")
-        self.source_label.setWordWrap(True)
+        self.markdown = MarkdownIt("commonmark", {"breaks": True, "html": False})
+        self.source_flow = QVBoxLayout()
+        self.source_flow.setContentsMargins(0, 0, 0, 0)
+        self.source_flow.setSpacing(10)
         self.ai_summary = QLabel("")
         self.ai_summary.setWordWrap(True)
-        self.figures = QVBoxLayout()
-        self.equations = QVBoxLayout()
 
         self.artifact_buttons: dict[str, QPushButton] = {}
         artifact_row = QHBoxLayout()
@@ -74,10 +78,8 @@ class ContentReader(QWidget):
         title_row.addWidget(Badge("Original content is never rewritten"))
         self.body_layout.addLayout(title_row)
         self.body_layout.addLayout(artifact_row)
-        self.body_layout.addWidget(Card("Original", self.source_label, "source"))
+        self.body_layout.addWidget(Card("Source", self._layout_widget(self.source_flow), "source"))
         self.body_layout.addWidget(Card("AI Summary", self.ai_summary, "ai"))
-        self.body_layout.addWidget(Card("Figures", self._layout_widget(self.figures), "source"))
-        self.body_layout.addWidget(Card("Equations", self._layout_widget(self.equations), "source"))
         self.body_layout.addStretch()
 
         scroll = QScrollArea()
@@ -100,17 +102,11 @@ class ContentReader(QWidget):
         self.current_section = section
         document = self.storage.get_document(section.document_id)
         self.title.setText(section.title)
-        self.source_label.setText(
-            f"<p><b>Document:</b> {escape(document.title if document else section.document_id)}</p>"
-            f"<p><b>Section ID:</b> {escape(section.id)}</p>"
-            f"<pre>{escape(section.verbatim_content)}</pre>"
-        )
+        self._render_source_flow(section, document.title if document else section.document_id)
         self.ai_summary.setText(
             f"<p><b>AI-generated, grounded in:</b> {escape(section.id)}</p>"
             f"<p>{escape(section.ai_summary or 'No AI summary has been generated yet.')}</p>"
         )
-        self._load_figures(section)
-        self._load_equations(section)
         self.section_changed.emit(section.document_id, section.id)
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
@@ -120,30 +116,154 @@ class ContentReader(QWidget):
             if widget:
                 widget.deleteLater()
 
+    def _render_source_flow(self, section: Section, document_title: str) -> None:
+        self._clear_layout(self.source_flow)
+        meta = QLabel(f"<b>Document:</b> {escape(document_title)} &nbsp; <b>Section:</b> {escape(section.id)}")
+        meta.setObjectName("muted")
+        meta.setWordWrap(True)
+        self.source_flow.addWidget(meta)
+
+        content = section.verbatim_content
+        section_start = section.source_char_start or 0
+        anchored: list[dict[str, Any]] = []
+        unanchored: list[dict[str, Any]] = []
+        for figure in self.storage.list_figures(section_id=section.id):
+            item = {"kind": "figure", "value": figure, **self._relative_span(figure.metadata, section_start)}
+            (anchored if item["start"] is not None else unanchored).append(item)
+        for equation in self.storage.list_equations(section_id=section.id):
+            item = {"kind": "equation", "value": equation, **self._relative_span(equation.metadata, section_start)}
+            (anchored if item["start"] is not None else unanchored).append(item)
+
+        cursor = 0
+        for item in sorted(anchored, key=self._source_item_sort_key):
+            start = max(0, min(item["start"], len(content)))
+            end = max(start, min(item["end"] or start, len(content)))
+            if start > cursor:
+                self._add_markdown_chunk(content[cursor:start])
+            self.source_flow.addWidget(self._media_widget(item))
+            cursor = max(cursor, end)
+        if cursor < len(content):
+            self._add_markdown_chunk(content[cursor:])
+        for item in sorted(unanchored, key=self._source_item_sort_key):
+            self.source_flow.addWidget(self._media_widget(item))
+        self.source_flow.addStretch()
+
+    @staticmethod
+    def _relative_span(metadata: dict[str, Any], section_start: int) -> dict[str, int | None]:
+        start = metadata.get("source_char_start")
+        end = metadata.get("source_char_end")
+        if not isinstance(start, int):
+            return {"start": None, "end": None}
+        return {"start": max(0, start - section_start), "end": max(start, end) - section_start if isinstance(end, int) else None}
+
+    @staticmethod
+    def _source_item_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        metadata = item["value"].metadata
+        start = item.get("start")
+        if start is not None:
+            return (0, start, item.get("end") or start)
+        order_key = metadata.get("order_key")
+        if isinstance(order_key, list):
+            return (1, *order_key)
+        bbox = item["value"].bbox or (0, 0, 0, 0)
+        return (1, item["value"].page_number or 0, bbox[1], bbox[0], item["value"].id)
+
+    def _add_markdown_chunk(self, text: str) -> None:
+        if not text.strip():
+            return
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        browser.setFrameShape(QFrame.Shape.NoFrame)
+        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        browser.setHtml(self._markdown_html(text))
+        browser.document().setTextWidth(760)
+        browser.setMinimumHeight(max(48, int(browser.document().size().height()) + 20))
+        self.source_flow.addWidget(browser)
+
+    def _markdown_html(self, text: str) -> str:
+        html = self.markdown.render(text)
+        return f"""
+        <!doctype html>
+        <html><head><style>
+        body {{
+            background: transparent;
+            color: #D7DAE0;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-size: 14px;
+            line-height: 1.58;
+            margin: 0;
+        }}
+        h1, h2, h3, h4 {{ color: #F5F7FA; line-height: 1.25; margin: 16px 0 8px; }}
+        h1 {{ font-size: 24px; }}
+        h2 {{ font-size: 20px; }}
+        h3 {{ font-size: 17px; }}
+        p {{ margin: 8px 0; }}
+        ul, ol {{ margin: 8px 0 8px 22px; padding: 0; }}
+        blockquote {{
+            border-left: 3px solid #4D7DFF;
+            color: #BFC5D2;
+            margin: 12px 0;
+            padding: 2px 0 2px 12px;
+        }}
+        code {{
+            background: #0F1117;
+            border: 1px solid #242832;
+            border-radius: 5px;
+            color: #E6E8EC;
+            padding: 1px 4px;
+        }}
+        pre {{
+            background: #0F1117;
+            border: 1px solid #242832;
+            border-radius: 10px;
+            margin: 12px 0;
+            padding: 12px;
+            white-space: pre-wrap;
+        }}
+        a {{ color: #8AB4FF; }}
+        table {{ border-collapse: collapse; margin: 12px 0; }}
+        th, td {{ border: 1px solid #303747; padding: 6px 8px; }}
+        </style></head><body>{html}</body></html>
+        """
+
+    def _media_widget(self, item: dict[str, Any]) -> QWidget:
+        value = item["value"]
+        if item["kind"] == "figure":
+            return self._figure_widget(value)
+        return self._equation_widget(value)
+
+    def _figure_widget(self, figure: Figure) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("card")
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(12, 12, 12, 12)
+        inner.setSpacing(8)
+        self._add_figure_image(inner, figure.crop_path)
+        if figure.caption:
+            caption = QLabel(figure.caption)
+            caption.setObjectName("muted")
+            caption.setWordWrap(True)
+            inner.addWidget(caption)
+        inner.addWidget(LabelValue("Figure ID", figure.id))
+        return frame
+
     def _load_figures(self, section: Section) -> None:
-        self._clear_layout(self.figures)
         figures = self.storage.list_figures(section_id=section.id)
         if not figures:
-            self.figures.addWidget(QLabel("No extracted figures for this section."))
             return
         for figure in figures:
-            frame = QFrame()
-            frame.setObjectName("card")
-            inner = QVBoxLayout(frame)
-            inner.setContentsMargins(12, 12, 12, 12)
-            inner.setSpacing(8)
-            self._add_figure_image(inner, figure.crop_path)
-            inner.addWidget(LabelValue("Figure ID", figure.id))
-            inner.addWidget(LabelValue("Caption", figure.caption or "No source caption detected."))
-            inner.addWidget(LabelValue("Bounding box", str(figure.bbox)))
-            if figure.ai_description:
-                inner.addWidget(LabelValue("AI description", figure.ai_description))
-            self.figures.addWidget(frame)
+            self.source_flow.addWidget(self._figure_widget(figure))
 
     @staticmethod
     def _add_figure_image(layout: QVBoxLayout, crop_path: str) -> None:
         image_path = Path(crop_path)
         if not image_path.exists():
+            label = QLabel(f"Image not found: {escape(crop_path)}")
+            label.setObjectName("muted")
+            label.setWordWrap(True)
+            layout.addWidget(label)
             return
         label = QLabel()
         pixmap = QPixmap(str(image_path))
@@ -160,13 +280,11 @@ class ContentReader(QWidget):
             layout.addWidget(label)
 
     def _load_equations(self, section: Section) -> None:
-        self._clear_layout(self.equations)
         equations = self.storage.list_equations(section_id=section.id)
         if not equations:
-            self.equations.addWidget(QLabel("No extracted equations for this section."))
             return
         for equation in equations:
-            self.equations.addWidget(self._equation_widget(equation))
+            self.source_flow.addWidget(self._equation_widget(equation))
 
     def _equation_widget(self, equation: Equation) -> QWidget:
         container = QFrame()
@@ -185,28 +303,81 @@ class ContentReader(QWidget):
         layout.addWidget(toggle)
         if QWebEngineView is not None:
             view = QWebEngineView()
-            view.setMinimumHeight(110)
+            view.setMinimumHeight(168)
+            view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            view.page().setBackgroundColor(QColor("#151821"))
             html = self._mathjax_html(equation.mathjax)
             view.setHtml(html)
             layout.addWidget(view)
         else:
-            layout.addWidget(QLabel(f"MathJax: {escape(equation.mathjax)}"))
+            fallback = QLabel(f"<pre>{escape(equation.mathjax)}</pre>")
+            fallback.setWordWrap(True)
+            layout.addWidget(fallback)
         layout.addWidget(source)
         return container
 
     @staticmethod
     def _mathjax_html(expression: str) -> str:
-        escaped = escape(expression)
+        display = ContentReader._display_math(expression)
+        escaped = escape(display)
         return f"""
         <!doctype html>
         <html><head>
+        <meta name="color-scheme" content="dark">
         <script>
-        window.MathJax = {{ tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }} }};
+        window.MathJax = {{
+            tex: {{
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+            }},
+            svg: {{ fontCache: 'global' }},
+            startup: {{ typeset: true }}
+        }};
         </script>
         <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-        <style>body {{ background: transparent; color: #dfe7ff; font-family: Inter, sans-serif; }}</style>
-        </head><body><div>\\[{escaped}\\]</div></body></html>
+        <style>
+        html, body {{
+            background: #151821;
+            color: #E6E8EC;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+        }}
+        body {{
+            align-items: center;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: center;
+            padding: 14px 12px;
+        }}
+        #equation {{
+            box-sizing: border-box;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 4px 0;
+            text-align: center;
+            width: 100%;
+        }}
+        mjx-container {{
+            color: #E6E8EC !important;
+            margin: 0 !important;
+            min-width: 0 !important;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 2px 0;
+        }}
+        </style>
+        </head><body><div id="equation">{escaped}</div></body></html>
         """
+
+    @staticmethod
+    def _display_math(expression: str) -> str:
+        stripped = expression.strip()
+        if stripped.startswith("$$") or stripped.startswith(r"\[") or stripped.startswith(r"\("):
+            return stripped
+        return rf"\[{stripped}\]"
 
     def open_artifact(self, artifact_type: str) -> None:
         if not self.current_section:

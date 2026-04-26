@@ -163,6 +163,7 @@ class FigureCandidate(BaseModel):
     caption: str | None = None
     related_text: str | None = None
     confidence: float = 0.5
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class EquationCandidate(BaseModel):
@@ -172,6 +173,7 @@ class EquationCandidate(BaseModel):
     mathjax: str
     related_text: str | None = None
     confidence: float = 0.5
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ParsedDocument(BaseModel):

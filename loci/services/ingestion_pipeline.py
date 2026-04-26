@@ -55,10 +55,20 @@ class IngestionPipeline:
             parsed = self.pdf.parse(Path(source_path))
             source_type = "pdf"
         elif suffix in {".md", ".markdown"}:
-            parsed = self.markdown.parse(Path(source_path).read_text(encoding="utf-8"), file_path.stem, "markdown")
+            parsed = self.markdown.parse(
+                Path(source_path).read_text(encoding="utf-8"),
+                file_path.stem,
+                "markdown",
+                base_dir=file_path.parent,
+            )
             source_type = "markdown"
         elif suffix == ".txt":
-            parsed = self.markdown.parse(Path(source_path).read_text(encoding="utf-8"), file_path.stem, "txt")
+            parsed = self.markdown.parse(
+                Path(source_path).read_text(encoding="utf-8"),
+                file_path.stem,
+                "txt",
+                base_dir=file_path.parent,
+            )
             source_type = "txt"
         else:
             raise ValueError(f"Unsupported file type for ingestion: {suffix}")
@@ -95,7 +105,8 @@ class IngestionPipeline:
 
         figures: list[Figure] = []
         for candidate in parsed.figures:
-            section_id = self._section_for_page_or_span(section_by_span, candidate.page_number, None)
+            span_start = self._metadata_int(candidate.metadata, "source_char_start")
+            section_id = self._section_for_page_or_span(section_by_span, candidate.page_number, span_start)
             figures.append(
                 self.storage.create_figure(
                     Figure(
@@ -108,13 +119,15 @@ class IngestionPipeline:
                         caption=candidate.caption,
                         ai_description=None,
                         confidence=candidate.confidence,
+                        metadata=candidate.metadata,
                     )
                 )
             )
 
         equations: list[Equation] = []
         for candidate in parsed.equations:
-            section_id = self._section_for_page_or_span(section_by_span, candidate.page_number, None)
+            span_start = self._metadata_int(candidate.metadata, "source_char_start")
+            section_id = self._section_for_page_or_span(section_by_span, candidate.page_number, span_start)
             equations.append(
                 self.storage.create_equation(
                     Equation(
@@ -126,6 +139,7 @@ class IngestionPipeline:
                         source_text=candidate.source_text,
                         mathjax=candidate.mathjax,
                         confidence=candidate.confidence,
+                        metadata=candidate.metadata,
                     )
                 )
             )
@@ -182,15 +196,20 @@ class IngestionPipeline:
 
     @staticmethod
     def _section_for_page_or_span(sections: list[Section], page: int | None, span_start: int | None) -> str | None:
-        if page is not None:
-            for section in sections:
-                if section.page_start is not None and section.page_end is not None and section.page_start <= page <= section.page_end:
-                    return section.id
         if span_start is not None:
             for section in sections:
                 if (section.source_char_start or 0) <= span_start <= (section.source_char_end or 0):
                     return section.id
+        if page is not None:
+            for section in sections:
+                if section.page_start is not None and section.page_end is not None and section.page_start <= page <= section.page_end:
+                    return section.id
         return sections[0].id if sections else None
+
+    @staticmethod
+    def _metadata_int(metadata: dict[str, object], key: str) -> int | None:
+        value = metadata.get(key)
+        return value if isinstance(value, int) else None
 
     def _create_document_artifacts(self, document_id: str, raw_text: str, sections: list[Section]) -> list[AIArtifact]:
         source_sections = sections[:8]
