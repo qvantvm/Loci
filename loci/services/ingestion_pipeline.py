@@ -187,7 +187,12 @@ class IngestionPipeline:
                 ai_summary=candidate.summary or self.openai.generate_section_summary(verbatim),
                 source_char_start=start,
                 source_char_end=end,
-                metadata={"confidence": candidate.confidence, "source_preservation": "verbatim_slice"},
+                metadata={
+                    "confidence": candidate.confidence,
+                    "source_preservation": "verbatim_slice",
+                    "status": "draft",
+                    "provenance": "human",
+                },
             )
             self.storage.create_section(section)
             sections.append(section)

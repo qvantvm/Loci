@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from loci.services.ingestion_pipeline import IngestionPipeline
+from loci.services.agent_orchestrator import AgentOrchestrator
 from loci.services.openai_service import OpenAIService
 from loci.services.recursive_context_engine import RecursiveContextEngine
 from loci.services.storage_service import StorageService
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
         self.openai = OpenAIService()
         self.pipeline = IngestionPipeline(self.storage, self.openai)
         self.rce = RecursiveContextEngine(self.storage, openai=self.openai)
+        self.agent_orchestrator = AgentOrchestrator(self.storage, self.rce, self.openai)
         self.current_section_id: str | None = None
         self.dark = True
 
@@ -50,7 +52,7 @@ class MainWindow(QMainWindow):
         self.library.setObjectName("sidebarPane")
         self.reader = ContentReader(self.storage)
         self.reader.setObjectName("editorPane")
-        self.discussion = DiscussionPane(self.storage, self.rce, self.openai)
+        self.discussion = DiscussionPane(self.storage, self.rce, self.openai, self.agent_orchestrator)
         self.discussion.setObjectName("agentPane")
 
         self.library.section_selected.connect(self.open_section)

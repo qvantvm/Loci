@@ -13,11 +13,16 @@ from typing import Any
 from loci.models.database import connect, initialize_database
 from loci.models.schemas import (
     AIArtifact,
+    AgentScratchpad,
+    AgentScratchpadEntry,
+    ConsistencyIssue,
+    ContentReference,
     DiscussionMessage,
     DiscussionThread,
     Document,
     Equation,
     Figure,
+    ResearchFragment,
     Section,
     ToolTrace,
     iso_now,
@@ -56,7 +61,14 @@ class StorageService:
         self.sources_dir = self.data_dir / "sources"
         self.crops_dir = self.data_dir / "crops"
         self.artifacts_dir = self.data_dir / "artifacts"
-        for directory in (self.data_dir, self.sources_dir, self.crops_dir, self.artifacts_dir):
+        self.generated_documents_dir = self.artifacts_dir / "generated_documents"
+        for directory in (
+            self.data_dir,
+            self.sources_dir,
+            self.crops_dir,
+            self.artifacts_dir,
+            self.generated_documents_dir,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
         self.db_path = Path(db_path) if db_path is not None else self.data_dir / "loci.sqlite"
         initialize_database(self.db_path)
@@ -135,6 +147,25 @@ class StorageService:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
         return self._row_to_document(row) if row else None
+
+    def update_document(self, document: Document) -> Document:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE documents
+                SET title = ?, source_type = ?, source_path = ?, original_hash = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    document.title,
+                    document.source_type,
+                    document.source_path,
+                    document.original_hash,
+                    _json(document.metadata),
+                    document.id,
+                ),
+            )
+        return document
 
     def _row_to_document(self, row: sqlite3.Row) -> Document:
         return Document(
@@ -242,6 +273,10 @@ class StorageService:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM sections WHERE id = ?", (section_id,)).fetchone()
         return self._row_to_section(row) if row else None
+
+    def delete_section(self, section_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM sections WHERE id = ?", (section_id,))
 
     def _upsert_fts(self, conn: sqlite3.Connection, section: Section) -> None:
         fts_enabled = conn.execute("SELECT value FROM app_metadata WHERE key = 'fts5_enabled'").fetchone()
@@ -547,6 +582,417 @@ class StorageService:
             grounding=_loads(row["grounding"], []),
             created_at=_dt(row["created_at"]),
             confidence=row["confidence"],
+            metadata=_loads(row["metadata"], {}),
+        )
+
+    # ------------------------------------------------------------------
+    # Agent scratchpads
+    # ------------------------------------------------------------------
+    def create_scratchpad(self, scratchpad: AgentScratchpad) -> AgentScratchpad:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_scratchpads(
+                  id, kind, status, document_id, section_id, question, pipeline,
+                  max_iterations, iteration_count, final_answer, created_at, updated_at, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    scratchpad.id,
+                    scratchpad.kind,
+                    scratchpad.status,
+                    scratchpad.document_id,
+                    scratchpad.section_id,
+                    scratchpad.question,
+                    scratchpad.pipeline,
+                    scratchpad.max_iterations,
+                    scratchpad.iteration_count,
+                    scratchpad.final_answer,
+                    scratchpad.created_at.isoformat(),
+                    scratchpad.updated_at.isoformat(),
+                    _json(scratchpad.metadata),
+                ),
+            )
+        return scratchpad
+
+    def update_scratchpad(self, scratchpad: AgentScratchpad) -> AgentScratchpad:
+        scratchpad.updated_at = iso_now()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE agent_scratchpads
+                SET kind = ?, status = ?, document_id = ?, section_id = ?, question = ?,
+                    pipeline = ?, max_iterations = ?, iteration_count = ?, final_answer = ?,
+                    updated_at = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    scratchpad.kind,
+                    scratchpad.status,
+                    scratchpad.document_id,
+                    scratchpad.section_id,
+                    scratchpad.question,
+                    scratchpad.pipeline,
+                    scratchpad.max_iterations,
+                    scratchpad.iteration_count,
+                    scratchpad.final_answer,
+                    scratchpad.updated_at.isoformat(),
+                    _json(scratchpad.metadata),
+                    scratchpad.id,
+                ),
+            )
+        return scratchpad
+
+    def get_scratchpad(self, scratchpad_id: str) -> AgentScratchpad | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM agent_scratchpads WHERE id = ?", (scratchpad_id,)).fetchone()
+        return self._row_to_scratchpad(row) if row else None
+
+    def list_scratchpads(
+        self,
+        kind: str | None = None,
+        document_id: str | None = None,
+        section_id: str | None = None,
+        limit: int = 25,
+    ) -> list[AgentScratchpad]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+        if document_id:
+            clauses.append("document_id = ?")
+            params.append(document_id)
+        if section_id:
+            clauses.append("section_id = ?")
+            params.append(section_id)
+        query = "SELECT * FROM agent_scratchpads"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_scratchpad(row) for row in rows]
+
+    def create_scratchpad_entry(self, entry: AgentScratchpadEntry) -> AgentScratchpadEntry:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_scratchpad_entries(
+                  id, scratchpad_id, actor, iteration, entry_type, content,
+                  grounding, confidence, created_at, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry.id,
+                    entry.scratchpad_id,
+                    entry.actor,
+                    entry.iteration,
+                    entry.entry_type,
+                    entry.content,
+                    _json(entry.grounding),
+                    entry.confidence,
+                    entry.created_at.isoformat(),
+                    _json(entry.metadata),
+                ),
+            )
+            conn.execute(
+                "UPDATE agent_scratchpads SET updated_at = ? WHERE id = ?",
+                (iso_now().isoformat(), entry.scratchpad_id),
+            )
+        return entry
+
+    def list_scratchpad_entries(self, scratchpad_id: str) -> list[AgentScratchpadEntry]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_scratchpad_entries
+                WHERE scratchpad_id = ?
+                ORDER BY iteration, created_at
+                """,
+                (scratchpad_id,),
+            ).fetchall()
+        return [self._row_to_scratchpad_entry(row) for row in rows]
+
+    def _row_to_scratchpad(self, row: sqlite3.Row) -> AgentScratchpad:
+        return AgentScratchpad(
+            id=row["id"],
+            kind=row["kind"],
+            status=row["status"],
+            document_id=row["document_id"],
+            section_id=row["section_id"],
+            question=row["question"],
+            pipeline=row["pipeline"],
+            max_iterations=row["max_iterations"],
+            iteration_count=row["iteration_count"],
+            final_answer=row["final_answer"],
+            created_at=_dt(row["created_at"]),
+            updated_at=_dt(row["updated_at"]),
+            metadata=_loads(row["metadata"], {}),
+        )
+
+    def _row_to_scratchpad_entry(self, row: sqlite3.Row) -> AgentScratchpadEntry:
+        return AgentScratchpadEntry(
+            id=row["id"],
+            scratchpad_id=row["scratchpad_id"],
+            actor=row["actor"],
+            iteration=row["iteration"],
+            entry_type=row["entry_type"],
+            content=row["content"],
+            grounding=_loads(row["grounding"], []),
+            confidence=row["confidence"],
+            created_at=_dt(row["created_at"]),
+            metadata=_loads(row["metadata"], {}),
+        )
+
+    # ------------------------------------------------------------------
+    # Generated AI documents
+    # ------------------------------------------------------------------
+    def save_generated_document_file(self, title: str, markdown: str) -> tuple[str, str]:
+        raw = markdown.encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+        slug = "".join(char.lower() if char.isalnum() else "-" for char in title).strip("-") or "generated"
+        while "--" in slug:
+            slug = slug.replace("--", "-")
+        path = self.generated_documents_dir / f"{new_id('generated')}_{slug[:48]}_{digest[:12]}.md"
+        path.write_bytes(raw)
+        return str(path), digest
+
+    def create_generated_document(
+        self,
+        title: str,
+        markdown: str,
+        grounding: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[Document, list[Section]]:
+        source_path, digest = self.save_generated_document_file(title, markdown)
+        document = self.create_document(
+            title,
+            "ai_generated",
+            source_path,
+            digest,
+            {"provenance": "ai_generated", **(metadata or {})},
+        )
+        sections = self._generated_markdown_sections(document.id, markdown, grounding or [])
+        return document, sections
+
+    def _generated_markdown_sections(
+        self,
+        document_id: str,
+        markdown: str,
+        grounding: list[dict[str, Any]],
+    ) -> list[Section]:
+        spans: list[tuple[int, int, str, int]] = []
+        offset = 0
+        for line in markdown.splitlines(keepends=True):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                marks = len(stripped) - len(stripped.lstrip("#"))
+                if 1 <= marks <= 6 and stripped[marks:].strip():
+                    spans.append((offset, offset + len(line), stripped[marks:].strip(), marks))
+            offset += len(line)
+        if not spans:
+            spans = [(0, 0, "Generated Content", 1)]
+
+        sections: list[Section] = []
+        stack: list[Section] = []
+        for index, (heading_start, _heading_end, title, level) in enumerate(spans):
+            end = spans[index + 1][0] if index + 1 < len(spans) else len(markdown)
+            start = heading_start
+            content = markdown[start:end].strip() or markdown.strip()
+            while stack and stack[-1].level >= level:
+                stack.pop()
+            parent = stack[-1] if stack else None
+            section = Section(
+                id=new_id("sec"),
+                document_id=document_id,
+                parent_id=parent.id if parent else None,
+                title=title,
+                level=level,
+                order_index=index,
+                verbatim_content=content,
+                ai_summary=content[:360],
+                source_char_start=start,
+                source_char_end=end,
+                metadata={
+                    "status": "ai_suggested",
+                    "provenance": "ai_generated",
+                    "grounding": grounding,
+                    "source_preservation": "generated_markdown_file",
+                },
+            )
+            self.create_section(section)
+            sections.append(section)
+            stack.append(section)
+        return sections
+
+    # ------------------------------------------------------------------
+    # References, consistency issues, and research fragments
+    # ------------------------------------------------------------------
+    def create_reference(self, reference: ContentReference) -> ContentReference:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO content_references(
+                  id, source_section_id, target_section_id, relationship, anchor_text, created_at, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    reference.id,
+                    reference.source_section_id,
+                    reference.target_section_id,
+                    reference.relationship,
+                    reference.anchor_text,
+                    reference.created_at.isoformat(),
+                    _json(reference.metadata),
+                ),
+            )
+        return reference
+
+    def list_references(self, section_id: str) -> list[ContentReference]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM content_references
+                WHERE source_section_id = ? OR target_section_id = ?
+                ORDER BY created_at DESC
+                """,
+                (section_id, section_id),
+            ).fetchall()
+        return [self._row_to_reference(row) for row in rows]
+
+    def _row_to_reference(self, row: sqlite3.Row) -> ContentReference:
+        return ContentReference(
+            id=row["id"],
+            source_section_id=row["source_section_id"],
+            target_section_id=row["target_section_id"],
+            relationship=row["relationship"],
+            anchor_text=row["anchor_text"],
+            created_at=_dt(row["created_at"]),
+            metadata=_loads(row["metadata"], {}),
+        )
+
+    def create_consistency_issue(self, issue: ConsistencyIssue) -> ConsistencyIssue:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO consistency_issues(id, document_id, section_id, severity, category, description, created_at, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    issue.id,
+                    issue.document_id,
+                    issue.section_id,
+                    issue.severity,
+                    issue.category,
+                    issue.description,
+                    issue.created_at.isoformat(),
+                    _json(issue.metadata),
+                ),
+            )
+        return issue
+
+    def list_consistency_issues(
+        self,
+        document_id: str,
+        section_id: str | None = None,
+    ) -> list[ConsistencyIssue]:
+        params: list[Any] = [document_id]
+        query = "SELECT * FROM consistency_issues WHERE document_id = ?"
+        if section_id is not None:
+            query += " AND section_id = ?"
+            params.append(section_id)
+        query += " ORDER BY created_at DESC"
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_consistency_issue(row) for row in rows]
+
+    def _row_to_consistency_issue(self, row: sqlite3.Row) -> ConsistencyIssue:
+        return ConsistencyIssue(
+            id=row["id"],
+            document_id=row["document_id"],
+            section_id=row["section_id"],
+            severity=row["severity"],
+            category=row["category"],
+            description=row["description"],
+            created_at=_dt(row["created_at"]),
+            metadata=_loads(row["metadata"], {}),
+        )
+
+    def create_research_fragment(self, fragment: ResearchFragment) -> ResearchFragment:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO research_fragments(
+                  id, title, content, document_id, section_id, status, grounding, created_at, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    fragment.id,
+                    fragment.title,
+                    fragment.content,
+                    fragment.document_id,
+                    fragment.section_id,
+                    fragment.status,
+                    _json(fragment.grounding),
+                    fragment.created_at.isoformat(),
+                    _json(fragment.metadata),
+                ),
+            )
+        return fragment
+
+    def update_research_fragment(self, fragment: ResearchFragment) -> ResearchFragment:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE research_fragments
+                SET title = ?, content = ?, document_id = ?, section_id = ?, status = ?, grounding = ?, metadata = ?
+                WHERE id = ?
+                """,
+                (
+                    fragment.title,
+                    fragment.content,
+                    fragment.document_id,
+                    fragment.section_id,
+                    fragment.status,
+                    _json(fragment.grounding),
+                    _json(fragment.metadata),
+                    fragment.id,
+                ),
+            )
+        return fragment
+
+    def get_research_fragment(self, fragment_id: str) -> ResearchFragment | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM research_fragments WHERE id = ?", (fragment_id,)).fetchone()
+        return self._row_to_research_fragment(row) if row else None
+
+    def list_research_fragments(self, status: str | None = "inbox") -> list[ResearchFragment]:
+        params: tuple[Any, ...] = ()
+        query = "SELECT * FROM research_fragments"
+        if status is not None:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY created_at DESC"
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_research_fragment(row) for row in rows]
+
+    def _row_to_research_fragment(self, row: sqlite3.Row) -> ResearchFragment:
+        return ResearchFragment(
+            id=row["id"],
+            title=row["title"],
+            content=row["content"],
+            document_id=row["document_id"],
+            section_id=row["section_id"],
+            status=row["status"],
+            grounding=_loads(row["grounding"], []),
+            created_at=_dt(row["created_at"]),
             metadata=_loads(row["metadata"], {}),
         )
 

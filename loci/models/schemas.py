@@ -28,7 +28,7 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
 
 
-SourceType = Literal["pdf", "markdown", "txt", "pasted"]
+SourceType = Literal["pdf", "markdown", "txt", "pasted", "ai_generated"]
 ArtifactType = Literal[
     "summary",
     "faq",
@@ -36,9 +36,30 @@ ArtifactType = Literal[
     "takeaways",
     "agent_message",
     "figure_description",
+    "dream_insight",
+    "pipeline_report",
+    "consistency_scan",
 ]
 AnchorType = Literal["section", "text_span", "figure", "equation"]
 Actor = Literal["user", "expert_agent", "critique_agent", "inexpert_agent"]
+ScratchpadActor = Literal[
+    "user",
+    "system",
+    "expert_agent",
+    "critique_agent",
+    "inexpert_agent",
+    "planner",
+    "retriever",
+    "extractor",
+    "judge",
+    "synthesizer",
+]
+AgentRunKind = Literal["dream", "question", "pipeline", "action", "consistency"]
+AgentRunStatus = Literal["pending", "running", "completed", "failed", "stopped"]
+ScratchpadEntryType = Literal["note", "question", "critique", "evidence", "decision", "answer", "artifact"]
+SectionStatus = Literal["draft", "needs_review", "ai_suggested", "imported", "verified", "final"]
+SectionProvenance = Literal["human", "ai_generated", "imported", "ai_modified", "human_revised_ai"]
+ReferenceRelationship = Literal["related", "supports", "contradicts", "extends", "summarizes", "cites"]
 
 
 class GroundingReference(BaseModel):
@@ -141,6 +162,78 @@ class DiscussionMessage(BaseModel):
     grounding: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     confidence: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentScratchpad(BaseModel):
+    """Durable workspace for multi-agent dream cycles and user questions."""
+
+    id: str = Field(default_factory=lambda: new_id("pad"))
+    kind: AgentRunKind
+    status: AgentRunStatus = "pending"
+    document_id: str | None = None
+    section_id: str | None = None
+    question: str | None = None
+    pipeline: str | None = None
+    max_iterations: int = 10
+    iteration_count: int = 0
+    final_answer: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentScratchpadEntry(BaseModel):
+    """One visible thought, evidence note, critique, or decision in a scratchpad."""
+
+    id: str = Field(default_factory=lambda: new_id("entry"))
+    scratchpad_id: str
+    actor: ScratchpadActor
+    iteration: int = 0
+    entry_type: ScratchpadEntryType = "note"
+    content: str
+    grounding: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: float | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContentReference(BaseModel):
+    """Relationship between two sections."""
+
+    id: str = Field(default_factory=lambda: new_id("ref"))
+    source_section_id: str
+    target_section_id: str
+    relationship: ReferenceRelationship = "related"
+    anchor_text: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConsistencyIssue(BaseModel):
+    """Structured quality issue reported by local or AI consistency checks."""
+
+    id: str = Field(default_factory=lambda: new_id("issue"))
+    document_id: str
+    section_id: str | None = None
+    severity: Literal["warning", "error"] = "warning"
+    category: str
+    description: str
+    created_at: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchFragment(BaseModel):
+    """Loose generated/imported note that can later become manuscript content."""
+
+    id: str = Field(default_factory=lambda: new_id("frag"))
+    title: str
+    content: str
+    document_id: str | None = None
+    section_id: str | None = None
+    status: Literal["inbox", "promoted", "archived"] = "inbox"
+    grounding: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

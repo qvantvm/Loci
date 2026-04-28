@@ -11,12 +11,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QTextEdit,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -49,6 +51,17 @@ class ContentReader(QWidget):
         self.source_flow.setSpacing(10)
         self.ai_summary = QLabel("")
         self.ai_summary.setWordWrap(True)
+        self.write_editor = QTextEdit()
+        self.write_editor.setMinimumHeight(220)
+        self.status_picker = QComboBox()
+        self.status_picker.addItems(["draft", "needs_review", "ai_suggested", "imported", "verified", "final"])
+        self.provenance_picker = QComboBox()
+        self.provenance_picker.addItems(["human", "ai_generated", "imported", "ai_modified", "human_revised_ai"])
+        self.save_section = QPushButton("Save AI Section")
+        self.save_section.clicked.connect(self._save_ai_section)
+        self.write_notice = QLabel("")
+        self.write_notice.setObjectName("muted")
+        self.write_notice.setWordWrap(True)
 
         self.artifact_buttons: dict[str, QPushButton] = {}
         artifact_row = QHBoxLayout()
@@ -87,6 +100,7 @@ class ContentReader(QWidget):
         self.body_layout.addLayout(artifact_row)
         self.body_layout.addWidget(Card("Source", self._layout_widget(self.source_flow), "source"))
         self.body_layout.addWidget(Card("AI Summary", self.ai_summary, "ai"))
+        self.body_layout.addWidget(self._write_mode_card())
         self.body_layout.addStretch()
 
         scroll = QScrollArea()
@@ -108,13 +122,73 @@ class ContentReader(QWidget):
             return
         self.current_section = section
         document = self.storage.get_document(section.document_id)
-        self.title.setText(section.title)
+        title_suffix = " [AI]" if document and document.source_type == "ai_generated" else ""
+        self.title.setText(f"{section.title}{title_suffix}")
         self._render_source_flow(section, document.title if document else section.document_id)
+        provenance = section.metadata.get("provenance") or (document.source_type if document else "unknown")
+        is_editable_ai = provenance in {"ai_generated", "ai_modified", "human_revised_ai"} or (
+            document is not None and document.source_type == "ai_generated"
+        )
         self.ai_summary.setText(
             f"<p><b>AI-generated, grounded in:</b> {escape(section.id)}</p>"
+            f"<p><b>Provenance:</b> {escape(str(provenance))}</p>"
             f"<p>{escape(section.ai_summary or 'No AI summary has been generated yet.')}</p>"
         )
+        self.write_editor.setPlainText(section.verbatim_content)
+        self.write_editor.setReadOnly(not is_editable_ai)
+        self.save_section.setEnabled(is_editable_ai)
+        self.write_notice.setText(
+            "AI-generated sections can be edited here; imported user source remains read-only."
+            if is_editable_ai
+            else "This is imported user source content. Edit generated notes or AI documents instead."
+        )
+        status = str(section.metadata.get("status", "draft"))
+        provenance_text = str(provenance)
+        self.status_picker.setCurrentText(status if status in self._combo_items(self.status_picker) else "draft")
+        self.provenance_picker.setCurrentText(
+            provenance_text if provenance_text in self._combo_items(self.provenance_picker) else "human"
+        )
         self.section_changed.emit(section.document_id, section.id)
+
+    def _write_mode_card(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Status"))
+        row.addWidget(self.status_picker)
+        row.addWidget(QLabel("Provenance"))
+        row.addWidget(self.provenance_picker)
+        row.addWidget(self.save_section)
+        layout.addLayout(row)
+        layout.addWidget(self.write_notice)
+        layout.addWidget(self.write_editor)
+        return Card("Write Mode", container, "ai")
+
+    def _save_ai_section(self) -> None:
+        if not self.current_section:
+            return
+        document = self.storage.get_document(self.current_section.document_id)
+        provenance = self.current_section.metadata.get("provenance")
+        is_editable_ai = provenance in {"ai_generated", "ai_modified", "human_revised_ai"} or (
+            document is not None and document.source_type == "ai_generated"
+        )
+        if not is_editable_ai:
+            return
+        self.current_section.verbatim_content = self.write_editor.toPlainText()
+        self.current_section.ai_summary = self.storage.get_section(self.current_section.id).ai_summary if self.storage.get_section(self.current_section.id) else self.current_section.ai_summary
+        self.current_section.metadata = self.current_section.metadata | {
+            "status": self.status_picker.currentText(),
+            "provenance": self.provenance_picker.currentText(),
+        }
+        self.storage.update_section(self.current_section)
+        self.load_section(self.current_section.id)
+
+    @staticmethod
+    def _combo_items(combo: QComboBox) -> set[str]:
+        return {combo.itemText(index) for index in range(combo.count())}
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         while layout.count():

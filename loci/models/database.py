@@ -94,6 +94,68 @@ CREATE TABLE IF NOT EXISTS discussion_messages (
     metadata TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS agent_scratchpads (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+    section_id TEXT REFERENCES sections(id) ON DELETE CASCADE,
+    question TEXT,
+    pipeline TEXT,
+    max_iterations INTEGER NOT NULL,
+    iteration_count INTEGER NOT NULL,
+    final_answer TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS agent_scratchpad_entries (
+    id TEXT PRIMARY KEY,
+    scratchpad_id TEXT NOT NULL REFERENCES agent_scratchpads(id) ON DELETE CASCADE,
+    actor TEXT NOT NULL,
+    iteration INTEGER NOT NULL,
+    entry_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    grounding TEXT NOT NULL DEFAULT '[]',
+    confidence REAL,
+    created_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS content_references (
+    id TEXT PRIMARY KEY,
+    source_section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+    target_section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL,
+    anchor_text TEXT,
+    created_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS consistency_issues (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    section_id TEXT REFERENCES sections(id) ON DELETE CASCADE,
+    severity TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS research_fragments (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    section_id TEXT REFERENCES sections(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    grounding TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS embeddings (
     id TEXT PRIMARY KEY,
     owner_type TEXT NOT NULL,
@@ -121,6 +183,12 @@ CREATE INDEX IF NOT EXISTS idx_sections_document ON sections(document_id, order_
 CREATE INDEX IF NOT EXISTS idx_sections_parent ON sections(parent_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_document ON ai_artifacts(document_id, artifact_type);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON discussion_messages(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_scratchpads_scope ON agent_scratchpads(document_id, section_id, kind, updated_at);
+CREATE INDEX IF NOT EXISTS idx_scratchpad_entries ON agent_scratchpad_entries(scratchpad_id, iteration, created_at);
+CREATE INDEX IF NOT EXISTS idx_references_source ON content_references(source_section_id);
+CREATE INDEX IF NOT EXISTS idx_references_target ON content_references(target_section_id);
+CREATE INDEX IF NOT EXISTS idx_consistency_scope ON consistency_issues(document_id, section_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_fragments_status ON research_fragments(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_traces_run ON rce_traces(run_id, timestamp);
 """
 

@@ -15,7 +15,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from loci.models.schemas import AIArtifact, DiscussionMessage, Section, SectionCandidate, iso_now, new_id
+from loci.models.schemas import AIArtifact, Section, SectionCandidate, iso_now, new_id
 from loci.services.grounding_service import GroundingService
 
 
@@ -147,37 +147,28 @@ class OpenAIService:
     def generate_takeaways(self, document_id: str, raw_text: str, sections: list[Section]) -> AIArtifact:
         return self.generate_document_artifact("takeaways", document_id, sections)
 
-    def agent_reply(self, agent_role: str, thread_context: dict[str, Any], user_message: str) -> DiscussionMessage:
+    def agent_reply(self, agent_role: str, thread_context: dict[str, Any], user_message: str) -> str:
         section: Section | None = thread_context.get("section")
-        thread_id = thread_context["thread_id"]
-        citation = {"section_id": section.id, "document_id": section.document_id, "confidence": 0.7} if section else {}
+        grounded_answer = thread_context.get("answer", "")
         quote = self._snippet(section.verbatim_content if section else "", 260)
         if agent_role == "expert_agent":
             content = (
                 "As the Expert Agent, I would defend the selected content by grounding the answer in the "
-                f"section's original wording: “{quote}”. The strongest reading is that the section supports "
-                f"this response to your question: {user_message}"
+                f"section's original wording: \"{quote}\". The strongest grounded response is:\n\n"
+                f"{grounded_answer or user_message}"
             )
         elif agent_role == "critique_agent":
             content = (
                 "As the Critique Agent, I see the selected section as the key evidence, but I would ask "
                 "whether its claims are sufficiently supported, scoped, and operationalized. "
-                f"Relevant source excerpt: “{quote}”."
+                f"Relevant source excerpt: \"{quote}\"."
             )
         else:
             content = (
                 "As the Inexpert Agent, I would restate the section in simpler terms and ask what the core "
-                f"terms mean. The part I am relying on is: “{quote}”."
+                f"terms mean. The part I am relying on is: \"{quote}\"."
             )
-        return DiscussionMessage(
-            id=new_id("msg"),
-            thread_id=thread_id,
-            actor=agent_role,  # type: ignore[arg-type]
-            content=content + f"\n\nGrounded in section {section.id if section else 'unknown'}.",
-            grounding=[citation] if citation else [],
-            created_at=iso_now(),
-            metadata={"model": self.model, "prompt_version": self.prompt_version},
-        )
+        return content + f"\n\nGrounded in section {section.id if section else 'unknown'}."
 
     def decompose_query(self, query: str, context: dict[str, Any] | None = None) -> list[str]:
         terms = [part.strip() for part in re.split(r"\band\b|[;?]", query, flags=re.I) if part.strip()]
