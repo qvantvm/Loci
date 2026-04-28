@@ -829,6 +829,83 @@ class StorageService:
             stack.append(section)
         return sections
 
+    def clean_ai_generated_content(self, delete_agent_messages: bool = True) -> dict[str, int]:
+        """Remove generated AI content while preserving imported source files and source sections."""
+
+        counts = {
+            "ai_documents": 0,
+            "artifact_files": 0,
+            "ai_artifacts": 0,
+            "scratchpads": 0,
+            "research_fragments": 0,
+            "consistency_issues": 0,
+            "traces": 0,
+            "embeddings": 0,
+            "agent_messages": 0,
+            "source_summaries": 0,
+        }
+
+        with self.connection() as conn:
+            counts["ai_documents"] = conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE source_type = 'ai_generated'"
+            ).fetchone()[0]
+            counts["ai_artifacts"] = conn.execute("SELECT COUNT(*) FROM ai_artifacts").fetchone()[0]
+            counts["scratchpads"] = conn.execute("SELECT COUNT(*) FROM agent_scratchpads").fetchone()[0]
+            counts["research_fragments"] = conn.execute("SELECT COUNT(*) FROM research_fragments").fetchone()[0]
+            counts["consistency_issues"] = conn.execute("SELECT COUNT(*) FROM consistency_issues").fetchone()[0]
+            counts["traces"] = conn.execute("SELECT COUNT(*) FROM rce_traces").fetchone()[0]
+            counts["embeddings"] = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+            counts["source_summaries"] = conn.execute(
+                "SELECT COUNT(*) FROM sections WHERE document_id IN (SELECT id FROM documents WHERE source_type != 'ai_generated') AND ai_summary != ''"
+            ).fetchone()[0]
+            if delete_agent_messages:
+                counts["agent_messages"] = conn.execute(
+                    "SELECT COUNT(*) FROM discussion_messages WHERE actor != 'user'"
+                ).fetchone()[0]
+
+            conn.execute("DELETE FROM ai_artifacts")
+            conn.execute("DELETE FROM agent_scratchpads")
+            conn.execute("DELETE FROM research_fragments")
+            conn.execute("DELETE FROM consistency_issues")
+            conn.execute("DELETE FROM rce_traces")
+            conn.execute("DELETE FROM embeddings")
+            if delete_agent_messages:
+                conn.execute("DELETE FROM discussion_messages WHERE actor != 'user'")
+            conn.execute("DELETE FROM documents WHERE source_type = 'ai_generated'")
+            conn.execute(
+                """
+                UPDATE sections
+                SET ai_summary = ''
+                WHERE document_id IN (SELECT id FROM documents WHERE source_type != 'ai_generated')
+                """
+            )
+            if conn.execute("SELECT value FROM app_metadata WHERE key = 'fts5_enabled'").fetchone():
+                try:
+                    conn.execute("DELETE FROM section_fts")
+                    for row in conn.execute("SELECT * FROM sections").fetchall():
+                        self._upsert_fts(conn, self._row_to_section(row))
+                except sqlite3.OperationalError:
+                    pass
+
+        counts["artifact_files"] = self._clear_generated_document_files()
+        return counts
+
+    def _clear_generated_document_files(self) -> int:
+        if not self.generated_documents_dir.exists():
+            return 0
+        removed = 0
+        for path in sorted(self.generated_documents_dir.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+                removed += 1
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+        self.generated_documents_dir.mkdir(parents=True, exist_ok=True)
+        return removed
+
     # ------------------------------------------------------------------
     # References, consistency issues, and research fragments
     # ------------------------------------------------------------------

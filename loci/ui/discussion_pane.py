@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -362,6 +363,9 @@ class DiscussionPane(QWidget):
             button = QPushButton(action)
             button.clicked.connect(lambda _=False, a=action: self._run_document_action(a))
             self.actions_flow.addWidget(button)
+        cleanup = QPushButton("Clean AI Generated Content")
+        cleanup.clicked.connect(self._clean_ai_generated_content)
+        self.actions_flow.addWidget(cleanup)
         self.actions_flow.addStretch()
 
     def _run_section_action(self, action: str) -> None:
@@ -375,6 +379,23 @@ class DiscussionPane(QWidget):
             if action == "Consistency Scan":
                 self.consistency.scan_document(self.document_id)
             self.refresh()
+
+    def _clean_ai_generated_content(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Clean AI Generated Content",
+            "Remove generated documents, scratchpads, fragments, AI artifacts, traces, embeddings, and AI agent messages? Imported source files and source sections will be preserved.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        counts = self.storage.clean_ai_generated_content(delete_agent_messages=True)
+        self.refresh()
+        self.messages_changed.emit()
+        QMessageBox.information(
+            self,
+            "AI Content Cleaned",
+            "\n".join(f"{key.replace('_', ' ').title()}: {value}" for key, value in counts.items()),
+        )
 
     def _render_references(self) -> None:
         if not self.section_id:
