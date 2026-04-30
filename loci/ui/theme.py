@@ -11,7 +11,7 @@ QWidget {
     background: transparent;
     color: #C7CBD3;
     font-family: Inter, "SF Pro Display", "Segoe UI", sans-serif;
-    font-size: 13px;
+    font-size: 11px;
 }
 QFrame#activityRail {
     background: #0D0F14;
@@ -19,7 +19,7 @@ QFrame#activityRail {
 }
 QLabel#railLogo {
     color: #F2F3F5;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 800;
 }
 QLabel#railItem {
@@ -57,7 +57,7 @@ QToolBar#topBar {
 }
 QLabel#appCrumb {
     color: #8B93A1;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 650;
     padding: 0 8px;
 }
@@ -108,19 +108,20 @@ QLabel#editorTab {
     border-left: 1px solid #2A2F3A;
     border-right: 1px solid #2A2F3A;
     color: #D7DAE0;
-    font-weight: 600;
-    padding: 9px 14px;
+    font-size: 20px;
+    font-weight: 750;
+    padding: 12px 16px;
 }
 QLabel#PaneTitle {
     color: #D7DAE0;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 1px;
     text-transform: uppercase;
 }
 QLabel#sectionTitle {
     color: #F2F3F5;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 650;
 }
 QLineEdit, QTextEdit, QPlainTextEdit {
@@ -231,7 +232,7 @@ QSplitter::handle:hover {
 }
 QLabel#cardTitle {
     color: #DDE1E8;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
 }
 QLabel#metadataLabel {
@@ -287,7 +288,7 @@ QWidget {
     background: transparent;
     color: #20242C;
     font-family: Inter, "SF Pro Display", "Segoe UI", sans-serif;
-    font-size: 13px;
+    font-size: 11px;
 }
 QToolBar#topBar {
     background: #F5F6FA;
@@ -349,14 +350,20 @@ QSplitter::handle {
     margin: 12px 0;
 }
 QLabel#PaneTitle {
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 700;
     color: #111827;
 }
 QLabel#sectionTitle {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 650;
     color: #111827;
+}
+QLabel#editorTab {
+    color: #111827;
+    font-size: 20px;
+    font-weight: 750;
+    padding: 12px 16px;
 }
 QLabel#cardTitle {
     color: #111827;

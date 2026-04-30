@@ -272,14 +272,14 @@ class ContentReader(QWidget):
             background: transparent;
             color: #C7CBD3;
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 14px;
-            line-height: 1.55;
+            font-size: 12px;
+            line-height: 1.5;
             margin: 0;
         }}
         h1, h2, h3, h4 {{ color: #F2F3F5; line-height: 1.25; margin: 16px 0 8px; }}
-        h1 {{ font-size: 24px; }}
-        h2 {{ font-size: 20px; }}
-        h3 {{ font-size: 17px; }}
+        h1 {{ font-size: 22px; }}
+        h2 {{ font-size: 18px; }}
+        h3 {{ font-size: 15px; }}
         p {{ margin: 8px 0; }}
         ul, ol {{ margin: 8px 0 8px 22px; padding: 0; }}
         blockquote {{
