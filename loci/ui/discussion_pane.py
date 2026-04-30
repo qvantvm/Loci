@@ -90,11 +90,13 @@ class DiscussionPane(QWidget):
         self.tabs = QTabWidget()
         self.dream_flow = self._new_flow()
         self.question_flow = self._new_flow()
+        self.artifacts_flow = self._new_flow()
         self.actions_flow = self._new_flow()
         self.references_flow = self._new_flow()
         self.consistency_flow = self._new_flow()
         self.tabs.addTab(self._scroll_widget(self.dream_flow), "Dreaming")
         self.tabs.addTab(self._scroll_widget(self.question_flow), "Question")
+        self.tabs.addTab(self._scroll_widget(self.artifacts_flow), "Artifacts")
         self.tabs.addTab(self._scroll_widget(self.actions_flow), "Actions")
         self.tabs.addTab(self._scroll_widget(self.references_flow), "References")
         self.tabs.addTab(self._scroll_widget(self.consistency_flow), "Consistency")
@@ -151,10 +153,12 @@ class DiscussionPane(QWidget):
     def refresh(self) -> None:
         self._clear_flow(self.dream_flow)
         self._clear_flow(self.question_flow)
+        self._clear_flow(self.artifacts_flow)
         self._clear_flow(self.references_flow)
         self._clear_flow(self.consistency_flow)
         self._render_dreaming()
         self._render_questions()
+        self._render_artifacts()
         self._render_references()
         self._render_consistency()
 
@@ -311,6 +315,40 @@ class DiscussionPane(QWidget):
         for pad in pads:
             self.question_flow.addWidget(self._scratchpad_card(pad))
         self.question_flow.addStretch()
+
+    def _render_artifacts(self) -> None:
+        if not self.document_id:
+            self.artifacts_flow.addWidget(QLabel("Select a section to see document artifacts."))
+            self.artifacts_flow.addStretch()
+            return
+        artifact_labels = {
+            "summary": "Whole Summary",
+            "faq": "FAQ",
+            "critique": "Critique",
+            "takeaways": "Takeaways",
+        }
+        for artifact_type, label in artifact_labels.items():
+            artifacts = self.storage.list_artifacts(document_id=self.document_id, artifact_type=artifact_type)
+            if not artifacts:
+                self.artifacts_flow.addWidget(Card(label, QLabel("No artifact has been generated yet."), "ai"))
+                continue
+            for artifact in artifacts[:3]:
+                card = Card(label, "ai")
+                meta = QLabel(
+                    f"Model: {artifact.model} | Prompt: {artifact.prompt_version} | "
+                    f"Confidence: {artifact.confidence if artifact.confidence is not None else 'n/a'}"
+                )
+                meta.setObjectName("muted")
+                meta.setWordWrap(True)
+                body = QLabel(artifact.content)
+                body.setWordWrap(True)
+                card.addWidget(meta)
+                card.addWidget(body)
+                refs = ", ".join(ref.get("section_id", "?") for ref in artifact.grounding[:8])
+                if refs:
+                    card.addWidget(LabelValue("Grounding", refs))
+                self.artifacts_flow.addWidget(card)
+        self.artifacts_flow.addStretch()
 
     def _scratchpad_card(self, pad: AgentScratchpad) -> QWidget:
         card = Card(f"{pad.kind.title()} Scratchpad", f"{pad.status} • {pad.iteration_count}/{pad.max_iterations}")

@@ -9,20 +9,7 @@ from typing import Any
 from markdown_it import MarkdownIt
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QTextEdit,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget
 
 try:  # pragma: no cover - depends on optional WebEngine availability.
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -31,7 +18,6 @@ except Exception:  # pragma: no cover
 
 from loci.models.schemas import Equation, Figure, Section
 from loci.services.storage_service import StorageService
-from loci.ui.artifact_views import ArtifactDialog
 from loci.ui.widgets import Badge, Card, LabelValue
 
 
@@ -39,44 +25,15 @@ class ContentReader(QWidget):
     """Render the selected section with strict source/AI separation."""
 
     section_changed = Signal(str, str)
-    artifact_requested = Signal(str)
 
     def __init__(self, storage: StorageService) -> None:
         super().__init__()
         self.storage = storage
         self.current_section: Section | None = None
         self.markdown = MarkdownIt("commonmark", {"breaks": True, "html": False})
-        self.source_flow = QVBoxLayout()
-        self.source_flow.setContentsMargins(0, 0, 0, 0)
-        self.source_flow.setSpacing(10)
-        self.ai_summary = QLabel("")
-        self.ai_summary.setWordWrap(True)
-        self.write_editor = QTextEdit()
-        self.write_editor.setMinimumHeight(220)
-        self.status_picker = QComboBox()
-        self.status_picker.addItems(["draft", "needs_review", "ai_suggested", "imported", "verified", "final"])
-        self.provenance_picker = QComboBox()
-        self.provenance_picker.addItems(["human", "ai_generated", "imported", "ai_modified", "human_revised_ai"])
-        self.save_section = QPushButton("Save AI Section")
-        self.save_section.clicked.connect(self._save_ai_section)
-        self.write_notice = QLabel("")
-        self.write_notice.setObjectName("muted")
-        self.write_notice.setWordWrap(True)
-
-        self.artifact_buttons: dict[str, QPushButton] = {}
-        artifact_row = QHBoxLayout()
-        artifact_row.setContentsMargins(0, 0, 0, 0)
-        artifact_row.setSpacing(6)
-        for artifact_type, label in {
-            "summary": "Whole Summary",
-            "faq": "FAQ",
-            "critique": "Critique",
-            "takeaways": "Takeaways",
-        }.items():
-            button = QPushButton(label)
-            button.clicked.connect(lambda _=False, t=artifact_type: self.open_artifact(t))
-            self.artifact_buttons[artifact_type] = button
-            artifact_row.addWidget(button)
+        self.document_flow = QVBoxLayout()
+        self.document_flow.setContentsMargins(0, 0, 0, 0)
+        self.document_flow.setSpacing(12)
 
         body = QWidget()
         self.body_layout = QVBoxLayout(body)
@@ -97,10 +54,7 @@ class ContentReader(QWidget):
         title_row.addWidget(Badge("Original content is never rewritten"))
         self.body_layout.addWidget(tab_bar)
         self.body_layout.addLayout(title_row)
-        self.body_layout.addLayout(artifact_row)
-        self.body_layout.addWidget(Card("Source", self._layout_widget(self.source_flow), "source"))
-        self.body_layout.addWidget(Card("AI Summary", self.ai_summary, "ai"))
-        self.body_layout.addWidget(self._write_mode_card())
+        self.body_layout.addLayout(self.document_flow)
         self.body_layout.addStretch()
 
         scroll = QScrollArea()
@@ -123,72 +77,10 @@ class ContentReader(QWidget):
         self.current_section = section
         document = self.storage.get_document(section.document_id)
         title_suffix = " [AI]" if document and document.source_type == "ai_generated" else ""
-        self.title.setText(f"{section.title}{title_suffix}")
-        self._render_source_flow(section, document.title if document else section.document_id)
-        provenance = section.metadata.get("provenance") or (document.source_type if document else "unknown")
-        is_editable_ai = provenance in {"ai_generated", "ai_modified", "human_revised_ai"} or (
-            document is not None and document.source_type == "ai_generated"
-        )
-        self.ai_summary.setText(
-            f"<p><b>AI-generated, grounded in:</b> {escape(section.id)}</p>"
-            f"<p><b>Provenance:</b> {escape(str(provenance))}</p>"
-            f"<p>{escape(section.ai_summary or 'No AI summary has been generated yet.')}</p>"
-        )
-        self.write_editor.setPlainText(section.verbatim_content)
-        self.write_editor.setReadOnly(not is_editable_ai)
-        self.save_section.setEnabled(is_editable_ai)
-        self.write_notice.setText(
-            "AI-generated sections can be edited here; imported user source remains read-only."
-            if is_editable_ai
-            else "This is imported user source content. Edit generated notes or AI documents instead."
-        )
-        status = str(section.metadata.get("status", "draft"))
-        provenance_text = str(provenance)
-        self.status_picker.setCurrentText(status if status in self._combo_items(self.status_picker) else "draft")
-        self.provenance_picker.setCurrentText(
-            provenance_text if provenance_text in self._combo_items(self.provenance_picker) else "human"
-        )
+        document_title = document.title if document else section.document_id
+        self.title.setText(f"{document_title}{title_suffix}")
+        self._render_document_sections(section)
         self.section_changed.emit(section.document_id, section.id)
-
-    def _write_mode_card(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(QLabel("Status"))
-        row.addWidget(self.status_picker)
-        row.addWidget(QLabel("Provenance"))
-        row.addWidget(self.provenance_picker)
-        row.addWidget(self.save_section)
-        layout.addLayout(row)
-        layout.addWidget(self.write_notice)
-        layout.addWidget(self.write_editor)
-        return Card("Write Mode", container, "ai")
-
-    def _save_ai_section(self) -> None:
-        if not self.current_section:
-            return
-        document = self.storage.get_document(self.current_section.document_id)
-        provenance = self.current_section.metadata.get("provenance")
-        is_editable_ai = provenance in {"ai_generated", "ai_modified", "human_revised_ai"} or (
-            document is not None and document.source_type == "ai_generated"
-        )
-        if not is_editable_ai:
-            return
-        self.current_section.verbatim_content = self.write_editor.toPlainText()
-        self.current_section.ai_summary = self.storage.get_section(self.current_section.id).ai_summary if self.storage.get_section(self.current_section.id) else self.current_section.ai_summary
-        self.current_section.metadata = self.current_section.metadata | {
-            "status": self.status_picker.currentText(),
-            "provenance": self.provenance_picker.currentText(),
-        }
-        self.storage.update_section(self.current_section)
-        self.load_section(self.current_section.id)
-
-    @staticmethod
-    def _combo_items(combo: QComboBox) -> set[str]:
-        return {combo.itemText(index) for index in range(combo.count())}
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         while layout.count():
@@ -197,13 +89,27 @@ class ContentReader(QWidget):
             if widget:
                 widget.deleteLater()
 
-    def _render_source_flow(self, section: Section, document_title: str) -> None:
-        self._clear_layout(self.source_flow)
-        meta = QLabel(f"<b>Document:</b> {escape(document_title)} &nbsp; <b>Section:</b> {escape(section.id)}")
+    def _render_document_sections(self, selected: Section) -> None:
+        self._clear_layout(self.document_flow)
+        sections = self.storage.list_sections(selected.document_id)
+        start = next((index for index, section in enumerate(sections) if section.id == selected.id), 0)
+        for index, section in enumerate(sections[start:], start=start):
+            self.document_flow.addWidget(self._section_card(section, index == start))
+        self.document_flow.addStretch()
+
+    def _section_card(self, section: Section, highlighted: bool = False) -> QWidget:
+        section_flow = QVBoxLayout()
+        section_flow.setContentsMargins(0, 0, 0, 0)
+        section_flow.setSpacing(8)
+        meta = QLabel(f"<b>Section:</b> {escape(section.id)}")
         meta.setObjectName("muted")
         meta.setWordWrap(True)
-        self.source_flow.addWidget(meta)
+        section_flow.addWidget(meta)
+        self._render_section_source(section, section_flow)
+        badge = "selected" if highlighted else "source"
+        return Card(section.title, self._layout_widget(section_flow), badge)
 
+    def _render_section_source(self, section: Section, flow: QVBoxLayout) -> None:
         content = section.verbatim_content
         section_start = section.source_char_start or 0
         anchored: list[dict[str, Any]] = []
@@ -220,14 +126,13 @@ class ContentReader(QWidget):
             start = max(0, min(item["start"], len(content)))
             end = max(start, min(item["end"] or start, len(content)))
             if start > cursor:
-                self._add_markdown_chunk(content[cursor:start])
-            self.source_flow.addWidget(self._media_widget(item))
+                self._add_markdown_chunk(content[cursor:start], flow)
+            flow.addWidget(self._media_widget(item))
             cursor = max(cursor, end)
         if cursor < len(content):
-            self._add_markdown_chunk(content[cursor:])
+            self._add_markdown_chunk(content[cursor:], flow)
         for item in sorted(unanchored, key=self._source_item_sort_key):
-            self.source_flow.addWidget(self._media_widget(item))
-        self.source_flow.addStretch()
+            flow.addWidget(self._media_widget(item))
 
     @staticmethod
     def _relative_span(metadata: dict[str, Any], section_start: int) -> dict[str, int | None]:
@@ -249,7 +154,7 @@ class ContentReader(QWidget):
         bbox = item["value"].bbox or (0, 0, 0, 0)
         return (1, item["value"].page_number or 0, bbox[1], bbox[0], item["value"].id)
 
-    def _add_markdown_chunk(self, text: str) -> None:
+    def _add_markdown_chunk(self, text: str, flow: QVBoxLayout) -> None:
         if not text.strip():
             return
         browser = QTextBrowser()
@@ -261,7 +166,7 @@ class ContentReader(QWidget):
         browser.setHtml(self._markdown_html(text))
         browser.document().setTextWidth(760)
         browser.setMinimumHeight(max(48, int(browser.document().size().height()) + 20))
-        self.source_flow.addWidget(browser)
+        flow.addWidget(browser)
 
     def _markdown_html(self, text: str) -> str:
         html = self.markdown.render(text)
@@ -335,7 +240,7 @@ class ContentReader(QWidget):
         if not figures:
             return
         for figure in figures:
-            self.source_flow.addWidget(self._figure_widget(figure))
+            self.document_flow.addWidget(self._figure_widget(figure))
 
     @staticmethod
     def _add_figure_image(layout: QVBoxLayout, crop_path: str) -> None:
@@ -365,7 +270,7 @@ class ContentReader(QWidget):
         if not equations:
             return
         for equation in equations:
-            self.source_flow.addWidget(self._equation_widget(equation))
+            self.document_flow.addWidget(self._equation_widget(equation))
 
     def _equation_widget(self, equation: Equation) -> QWidget:
         container = QFrame()
@@ -460,8 +365,3 @@ class ContentReader(QWidget):
             return stripped
         return rf"\[{stripped}\]"
 
-    def open_artifact(self, artifact_type: str) -> None:
-        if not self.current_section:
-            return
-        dialog = ArtifactDialog(self.storage, self.current_section.document_id, artifact_type, self)
-        dialog.exec()

@@ -58,7 +58,6 @@ class MainWindow(QMainWindow):
         self.library.section_selected.connect(self.open_section)
         self.library.upload_requested.connect(self.upload_file)
         self.library.paste_requested.connect(self.paste_text)
-        self.reader.artifact_requested.connect(self.show_artifact)
         self.discussion.messages_changed.connect(self.library.refresh)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
